@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+from streamlit_gsheets import GSheetsConnection  # <-- Esta es la línea que faltaba
 import pandas as pd
 from datetime import datetime
 
@@ -10,6 +10,7 @@ st.title("🚗 Portal de Auditoría de Gestión")
 st.markdown("---")
 
 # Conexión con tu Google Sheets
+# Aquí usamos el nombre del tipo de conexión correctamente
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # URL de tu planilla suministrada
@@ -23,7 +24,7 @@ if menu == "Dashboard de Control":
     
     try:
         # Lectura de datos
-        df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0) # ttl=0 para datos frescos
+        df = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
         df = df.dropna(how="all")
 
         # Filtros en la barra lateral
@@ -47,46 +48,25 @@ if menu == "Dashboard de Control":
         st.dataframe(df_filt, use_container_width=True)
 
     except Exception as e:
-        st.error("Conecte su Google Sheets en el archivo de configuración para visualizar los datos.")
+        st.error(f"Error al cargar datos: {e}")
 
 elif menu == "Nueva Auditoría":
     st.header("📝 Registro de Nueva Auditoría")
-    st.info("Complete los campos. Al finalizar, los datos se enviarán automáticamente al Excel.")
-
+    
     with st.form("form_auditoria", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        
         with col1:
             fecha = st.date_input("Fecha", datetime.now())
             suc = st.selectbox("Sucursal", ["Jujuy", "Salta", "Tartagal"])
             nom_asesor = st.text_input("Nombre del Asesor")
             vin = st.text_input("VIN / Chasis")
-
         with col2:
             q2 = st.slider("Q2 - Nivel de Recomendación", 0, 10, 8)
             tipo = st.selectbox("Tipo de Intervención", ["Mantenimiento", "Correctivo", "Garantía"])
             estado_v = st.radio("Estado General", ["Aprobado", "Con Observaciones", "Rechazado"])
 
         obs = st.text_area("Observaciones del Auditor")
-        
         enviar = st.form_submit_button("Guardar Auditoría")
 
         if enviar:
-            # Estructura del nuevo registro
-            nuevo_dato = pd.DataFrame([{
-                "Fecha": fecha.strftime("%d/%m/%Y"),
-                "Sucursal": suc,
-                "Asesor": nom_asesor,
-                "VIN": vin,
-                "Q2 - RECOMENDACIÓN": q2,
-                "Tipo": tipo,
-                "Estado": estado_v,
-                "Observaciones": obs
-            }])
-            
-            # Lógica para añadir fila (Requiere configuración de escritura)
-            # updated_df = pd.concat([df, nuevo_dato], ignore_index=True)
-            # conn.update(spreadsheet=SPREADSHEET_URL, data=updated_df)
-            
-            st.success("¡Datos enviados correctamente!")
-            st.balloons()
+            st.success("¡Datos listos para enviar! (Para activar el guardado, el Excel debe tener permisos de la cuenta de servicio)")
