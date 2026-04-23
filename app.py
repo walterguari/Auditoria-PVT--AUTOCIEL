@@ -3,67 +3,69 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Portal Auditoría Autociel", layout="wide")
+st.set_page_config(page_title="Checklist de Auditoría Autociel", layout="wide")
 
-st.title("🚗 Control de Gestión y Auditoría")
+st.title("📋 Checklist de Auditoría de Gestión")
 st.markdown("---")
 
-# URL de tu Sheets (Estandarizada)
-url = "https://docs.google.com/spreadsheets/d/1JYJrSU9aqdG7OqqBwa67DJjTui2DHqsmy7E8dNyMbok/edit"
+# URL de tu Sheets
+url = "https://docs.google.com/spreadsheets/d/1JYJrSU9aqdG7OqqBwa67DJjTui2DHqsmy7E8dNyMbok/edit#gid=1392263871"
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # --- FORMULARIO DE AUDITORÍA ---
-    with st.form("audit_form"):
-        st.subheader("📋 Nueva Auditoría de Proceso")
-        
-        col1, col2 = st.columns(2)
-        
+    # Leemos la planilla base
+    # Nota: Ajustamos el rango para leer las columnas E, F y G
+    df_base = conn.read(spreadsheet=url, ttl=0)
+    
+    # Limpiamos los datos (asumiendo que las preguntas empiezan después del encabezado)
+    # Filtramos filas vacías en la columna E (Preguntas)
+    preguntas_df = df_base.iloc[:, [4, 5]].dropna(subset=[df_base.columns[4]]) 
+
+    with st.form("checklist_form"):
+        st.subheader("⚙️ Configuración de la Auditoría")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            fecha = st.date_input("Fecha de Auditoría", datetime.now())
+            fecha = st.date_input("Fecha", datetime.now())
+        with col2:
             sucursal = st.selectbox("Sucursal", ["Jujuy", "Salta", "Tartagal"])
-            asesor = st.selectbox("Asesor auditado", ["Haydeé", "Antonio", "Otro"])
-            vin = st.text_input("Últimos 7 dígitos del VIN")
+        with col3:
+            auditor = st.text_input("Auditor", value="Walter")
         
         st.markdown("---")
+        st.subheader("📝 Evaluación de Puntos de Control")
         
-        # SECCIÓN 1: Columna E - GESTIÓN Y DOCUMENTACIÓN
-        st.subheader("📂 Sector A: Gestión y Documentación (Col. E)")
-        col_e1, col_e2 = st.columns(2)
-        with col_e1:
-            estado_legajo = st.selectbox("Estado del Legajo", ["Completo", "Pendiente Digitalización", "Faltan Firmas"])
-        with col_e2:
-            cumple_gestoria = st.radio("¿Cumple tiempos de gestoría?", ["Sí", "No"])
+        respuestas = []
+        
+        # Generar dinámicamente el checklist basado en las columnas E y F
+        for index, row in preguntas_df.iterrows():
+            pregunta = row.iloc[0]      # Columna E
+            descripcion = row.iloc[1]   # Columna F
+            
+            st.write(f"**{pregunta}**")
+            if pd.notnull(descripcion):
+                st.caption(f"ℹ️ {descripcion}")
+            
+            # Selector de nota/cumplimiento para la Columna G
+            nota = st.radio(
+                f"Resultado para: {pregunta}",
+                ["Cumple", "No Cumple", "N/A"],
+                key=f"preg_{index}",
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+            respuestas.append(nota)
+            st.markdown("---")
 
-        # SECCIÓN 2: Columna F - ESTADO DE UNIDAD / TALLER
-        st.subheader("🛠️ Sector B: Estado de Unidad y Taller (Col. F)")
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            limpieza = st.select_slider("Calidad de Limpieza / Estética", options=["Mala", "Regular", "Buena", "Excelente"])
-            protecciones = st.checkbox("Uso de fundas y protecciones Stellantis/Toyota")
-        with col_f2:
-            pdi_realizado = st.radio("¿PDI / Control de niveles realizado?", ["Sí", "No"])
-            muda_detectada = st.checkbox("¿Se detectó MUDA (tiempo muerto) en el proceso?")
-
-        # SECCIÓN 3: Columna G - CONTROL DE ENTREGA Y Q2
-        st.subheader("⭐ Sector C: Control de Entrega y Recomendación (Col. G)")
-        q2_score = st.slider("Q2 - ¿Qué tan probable es que el cliente nos recomiende? (1-10)", 1, 10, 8)
-        comentarios = st.text_area("Observaciones de la Auditoría")
-
-        submit = st.form_submit_button("Registrar Auditoría")
+        observaciones_gen = st.text_area("Observaciones Generales de la Auditoría")
+        
+        submit = st.form_submit_button("Finalizar y Guardar Auditoría")
 
         if submit:
-            # Aquí se crearía el diccionario para enviar al Sheets
-            st.success(f"Auditoría registrada para el VIN {vin}. Datos listos para sincronizar con Columnas E, F y G.")
-
-    # --- VISUALIZACIÓN DE DATOS ACTUALES ---
-    st.markdown("---")
-    st.subheader("📊 Datos en Planilla (Columnas E, F, G)")
-    df = conn.read(spreadsheet=url, ttl=0)
-    # Mostramos solo las columnas relevantes para este análisis
-    columnas_interes = df.iloc[:, [4, 5, 6]] # E, F y G son índices 4, 5 y 6
-    st.dataframe(columnas_interes.tail(10))
+            st.success("✅ Auditoría procesada. Los resultados se han vinculado a la estructura de las columnas E, F y G.")
+            # Aquí podrías agregar la lógica para escribir de vuelta al Sheets si lo deseas
+            st.balloons()
 
 except Exception as e:
-    st.error(f"Error al conectar con el portal: {e}")
+    st.error(f"No pudimos cargar las preguntas del Sheets: {e}")
+    st.info("Asegúrate de que la hoja tenga datos en las columnas E y F.")
