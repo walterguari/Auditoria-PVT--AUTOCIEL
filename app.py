@@ -14,18 +14,23 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=60)
 def cargar_todo(url):
+    # Lectura inicial
     df = conn.read(spreadsheet=url, ttl=0)
     
-    # Mapa de Preguntas y Descripciones (Col F y Col G)
+    # 1. Mapa de Preguntas y Descripciones (Col F y Col G)
     df_preg = df.iloc[:, [5, 6]].dropna(subset=[df.columns[5]])
     mapa_descripciones = dict(zip(df_preg.iloc[:, 0], df_preg.iloc[:, 1]))
     lista_preguntas = list(mapa_descripciones.keys())
     
-    # Historial para el Dashboard (Col L / Índice 11)
+    # 2. Limpieza del Historial para el Dashboard (Col L / Índice 11)
     df_hist = df.copy()
+    
+    # Aseguramos tipos de datos correctos desde el inicio
+    df_hist.iloc[:, 0] = pd.to_datetime(df_hist.iloc[:, 0], errors='coerce')
     df_hist.iloc[:, 11] = pd.to_numeric(df_hist.iloc[:, 11], errors='coerce')
-    historial = df_hist[df_hist.iloc[:, 11].notnull()].reset_index(drop=True)
-    historial.iloc[:, 0] = pd.to_datetime(historial.iloc[:, 0], errors='coerce')
+    
+    # Filtramos filas sin fecha o sin score para evitar errores en gráficos
+    historial = df_hist.dropna(subset=[df_hist.columns[0], df_hist.columns[11]]).reset_index(drop=True)
     
     return df, lista_preguntas, mapa_descripciones, historial
 
@@ -43,10 +48,12 @@ try:
             f_col1, f_col2 = st.columns(2)
             auditores_unicos = df_historial.iloc[:, 1].unique()
             sel_auditor = f_col1.multiselect("Filtrar por Auditor", options=auditores_unicos)
+            
             df_display = df_historial.copy()
             if sel_auditor:
                 df_display = df_display[df_display.iloc[:, 1].isin(sel_auditor)]
 
+        # Métricas principales
         meta = 90
         total_audits = len(df_display)
         promedio_gral = df_display.iloc[:, 11].mean() if total_audits > 0 else 0
@@ -59,14 +66,33 @@ try:
         st.markdown("### 📅 Tendencia Mensual")
         if total_audits > 0:
             df_m = df_display.copy()
+            # Convertimos a string de mes para agrupar visualmente
             df_m['Mes'] = df_m.iloc[:, 0].dt.strftime('%Y-%m')
+            
+            # Agrupación asegurando que el resultado sea un DataFrame limpio
             resumen_m = df_m.groupby('Mes')[df_m.columns[11]].mean().reset_index()
+            
             fig_m = go.Figure()
-            fig_m.add_trace(go.Scatter(x=resumen_m['Mes'], y=resumen_m.iloc[:, 1], mode='lines+markers+text',
-                                     text=resumen_m.iloc[:, 1].astype(int).astype(str) + "%", textposition="top center",
-                                     line=dict(color='#1E88E5', width=4)))
-            fig_m.add_shape(type="line", x0=-0.5, x1=len(resumen_m)-0.5, y0=meta, y1=meta, line=dict(color="Red", dash="dash"))
-            fig_m.update_layout(yaxis=dict(range=[0, 110]), template="plotly_white", height=300)
+            # Forzamos x a string para evitar que Plotly intente interpretarlo como date puro
+            fig_m.add_trace(go.Scatter(
+                x=resumen_m['Mes'].astype(str), 
+                y=resumen_m.iloc[:, 1], 
+                mode='lines+markers+text',
+                text=resumen_m.iloc[:, 1].round(1).astype(str) + "%", 
+                textposition="top center",
+                line=dict(color='#1E88E5', width=4)
+            ))
+            
+            fig_m.add_shape(type="line", x0=-0.5, x1=len(resumen_m)-0.5, y0=meta, y1=meta, 
+                            line=dict(color="Red", dash="dash"))
+            
+            fig_m.update_layout(
+                yaxis=dict(range=[0, 110], title="Cumplimiento %"),
+                xaxis=dict(title="Período Mensual"),
+                template="plotly_white", 
+                height=350,
+                margin=dict(l=20, r=20, t=20, b=20)
+            )
             st.plotly_chart(fig_m, use_container_width=True)
 
         if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True, type="primary"):
@@ -96,17 +122,16 @@ try:
 
         with st.container(border=True):
             f1, f2 = st.columns(2)
-            fecha_a = f1.date_input("Fecha", datetime.now())
-            auditor_n = f2.text_input("Nombre del Auditor")
+            fecha_a = f1.date_input("Fecha de Auditoría", datetime.now())
+            auditor_n = f2.text_input("Nombre del Auditor", placeholder="Ej: Juan Pérez")
 
         st.markdown("---")
         
-        # Almacenes de datos adicionales
-        datos_adicionales = {} # Guardará {índice: {'fotos': [...], 'obs': "..."}}
+        datos_adicionales = {} 
 
         for i, pregunta in enumerate(lista_preguntas):
             with st.expander(f"{i+1}. {pregunta}", expanded=resp_actuales[i]=="Pendiente"):
-                detalle = mapa_descripciones.get(pregunta, "Sin descripción.")
+                detalle = mapa_descripciones.get(pregunta, "Sin descripción técnica disponible.")
                 with st.popover("📖 Guía técnica"):
                     st.info(detalle)
                 
@@ -116,14 +141,11 @@ try:
                     st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True)
                 
                 with col_f:
-                    # CARGA DE HASTA 6 FOTOS
-                    archivos = st.file_uploader(f"Fotos (Máx 6)", type=['jpg','jpeg','png'], accept_multiple_files=True, key=f"f_{i}")
+                    archivos = st.file_uploader(f"Evidencia (Máx 6)", type=['jpg','jpeg','png'], accept_multiple_files=True, key=f"f_{i}")
                 
                 with col_obs:
-                    # CUADRO DE OBSERVACIONES POR PREGUNTA
-                    observacion = st.text_area("Observaciones / Relato:", key=f"obs_{i}", placeholder="Detalle el hallazgo aquí...")
+                    observacion = st.text_area("Notas / Hallazgos:", key=f"obs_{i}", placeholder="Describa lo observado...")
                 
-                # Guardamos los nombres de archivos si existen
                 if archivos or observacion:
                     datos_adicionales[i] = {
                         'fotos': [f.name for f in archivos[:6]] if archivos else [],
@@ -135,27 +157,33 @@ try:
                     for idx, img in enumerate(archivos[:6]):
                         m_cols[idx].image(img, width=60)
 
-        if st.button("💾 Finalizar y Guardar", use_container_width=True, type="primary"):
+        if st.button("💾 Finalizar y Guardar Auditoría", use_container_width=True, type="primary"):
             if contestadas < len(lista_preguntas) or not auditor_n:
-                st.warning("⚠️ Checklist incompleto.")
+                st.warning("⚠️ El checklist no está completo o falta el nombre del auditor.")
             else:
-                with st.spinner("Enviando a Google Sheets..."):
-                    # Columna J ahora guarda tanto fotos como observaciones
+                with st.spinner("Sincronizando con Google Sheets..."):
+                    # Formateamos la fecha a string para evitar conflictos de tipo al guardar
+                    fecha_str = fecha_a.strftime('%Y-%m-%d')
+                    
                     nueva_fila = pd.DataFrame([[
-                        str(fecha_a), auditor_n, f"AUD-{len(df_historial)+1}", 
+                        fecha_str, 
+                        auditor_n, 
+                        f"AUD-{len(df_historial)+1}", 
                         "", "", "", "", "", "", 
-                        str(datos_adicionales),         # J: Fotos y Observaciones detalladas
-                        str(list(resp_actuales.values())), # K: Respuestas
-                        score_vivo                      # L: Score
+                        str(datos_adicionales), 
+                        str(list(resp_actuales.values())), 
+                        score_vivo 
                     ]], columns=df_base.columns)
                     
                     df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
                     conn.update(spreadsheet=url, data=df_final)
+                    
+                    # Limpiamos caché para que el dashboard se actualice al instante
                     st.cache_data.clear()
-                    st.success("✅ Guardado.")
+                    st.success("✅ Auditoría guardada correctamente.")
                     st.balloons()
                     st.session_state.auditoria_activa = False
                     st.rerun()
 
 except Exception as e:
-    st.error(f"Error: {e}")
+    st.error(f"Hubo un problema al procesar los datos: {e}")
