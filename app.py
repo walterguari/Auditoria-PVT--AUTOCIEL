@@ -13,11 +13,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 @st.cache_data(ttl=60)
 def cargar_todo(url):
     df = conn.read(spreadsheet=url, ttl=0)
-    # Lista fija de preguntas (Columna E)
+    # 1. Extraer preguntas (Columna E / Índice 4)
     preguntas = df.iloc[:, 4].dropna().unique().tolist()
-    # Asumimos que el historial de auditorías está en la misma hoja o puedes crear una nueva
-    # Para este ejemplo, filtramos las filas que ya tienen resultados en la Columna G (Cumplimiento %)
-    historial = df[df.iloc[:, 6].notlineal()] # Ajusta según tu estructura de Excel
+    
+    # 2. Filtrar Historial (Filas que tienen un valor numérico en la Columna G / Índice 6)
+    # Convertimos la columna a numérico por si acaso
+    df_temp = df.copy()
+    df_temp.iloc[:, 6] = pd.to_numeric(df_temp.iloc[:, 6], errors='coerce')
+    historial = df_temp[df_temp.iloc[:, 6].notnull()] 
+    
     return df, preguntas, historial
 
 # --- ESTADO DE LA SESIÓN ---
@@ -30,70 +34,72 @@ st.markdown("---")
 try:
     df_base, lista_preguntas, df_historial = cargar_todo(url)
 
-    # --- PANTALLA 1: DASHBOARD CON HISTORIAL ---
+    # --- PANTALLA 1: DASHBOARD ---
     if not st.session_state.auditoria_activa:
         st.subheader("📊 Panel de Control Histórico")
         
-        # Simulamos que la columna 6 tiene los porcentajes pasados
-        # Si tu Excel está vacío, esto mostrará datos iniciales
-        if not df_historial.empty:
-            ultimo_score = df_historial.iloc[-1, 6] 
-            total_auditorias = len(df_historial)
+        objetivo = 90
+        total_auditorias = len(df_historial)
+        
+        if total_auditorias > 0:
+            ultimo_score = df_historial.iloc[-1, 6]
+            cumplimiento_promedio = df_historial.iloc[:, 6].mean()
         else:
             ultimo_score = 0
-            total_auditorias = 0
-            
-        objetivo = 90
+            cumplimiento_promedio = 0
 
-        # FILA 1: MÉTRICAS
+        # MÉTRICAS PRINCIPALES
         m1, m2, m3 = st.columns(3)
-        m1.metric("Último Resultado", f"{int(ultimo_score)}%", delta=f"{int(ultimo_score-objetivo)}% vs Meta")
-        m2.metric("Total Auditorías", total_auditorias)
-        m3.metric("Objetivo", f"{objetivo}%")
+        m1.metric("Cumplimiento Promedio", f"{int(cumplimiento_promedio)}%", 
+                  delta=f"{int(cumplimiento_promedio - objetivo)}% vs Meta")
+        m2.metric("Auditorías Realizadas", total_auditorias)
+        m3.metric("Último Resultado", f"{int(ultimo_score)}%")
 
-        # FILA 2: GRÁFICOS
-        g1, g2 = st.columns(2)
+        st.markdown("### Evolución de Resultados")
         
-        with g1:
-            st.write("**Evolución de Cumplimiento (Tendencia)**")
-            # Gráfico de líneas para ver Enero, Febrero, etc.
-            fig_line = go.Figure()
-            fig_line.add_trace(go.Scatter(
-                y=df_historial.iloc[:, 6] if not df_historial.empty else [0], 
-                mode='lines+markers',
-                line=dict(color='#FF4B4B', width=4),
-                name="Auditoría"
-            ))
-            fig_line.add_shape(type="line", x0=0, x1=total_auditorias, y0=objetivo, y1=objetivo, line=dict(color="Black", dash="dash"))
-            fig_line.update_layout(yaxis=dict(range=[0, 105]), height=300, margin=dict(l=20,r=20,t=20,b=20))
-            st.plotly_chart(fig_line, use_container_width=True)
+        # GRÁFICO DE TENDENCIA (Líneas)
+        fig_evolucion = go.Figure()
+        
+        # Línea de tendencia
+        fig_evolucion.add_trace(go.Scatter(
+            x=list(range(1, total_auditorias + 1)),
+            y=df_historial.iloc[:, 6] if total_auditorias > 0 else [0],
+            mode='lines+markers',
+            name='Resultado %',
+            line=dict(color='#FF4B4B', width=3),
+            marker=dict(size=10)
+        ))
+        
+        # Línea de Meta (90%)
+        fig_evolucion.add_shape(
+            type="line", x0=1, x1=max(total_auditorias, 1), y0=objetivo, y1=objetivo,
+            line=dict(color="Black", width=2, dash="dash")
+        )
 
-        with g2:
-            st.write("**Último Resultado vs Meta**")
-            fig_bar = go.Figure(go.Bar(
-                x=['Actual'], y=[ultimo_score],
-                marker_color='#28A745' if ultimo_score >= objetivo else '#FF4B4B'
-            ))
-            fig_bar.add_shape(type="line", x0=-0.5, x1=0.5, y0=objetivo, y1=objetivo, line=dict(color="Black", dash="dash"))
-            fig_bar.update_layout(yaxis=dict(range=[0, 105]), height=300, margin=dict(l=20,r=20,t=20,b=20))
-            st.plotly_chart(fig_bar, use_container_width=True)
+        fig_evolucion.update_layout(
+            yaxis=dict(range=[0, 105], title="Porcentaje %"),
+            xaxis=dict(title="Número de Auditoría"),
+            height=400,
+            template="plotly_white"
+        )
+        st.plotly_chart(fig_evolucion, use_container_width=True)
 
         if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True, type="primary"):
             st.session_state.auditoria_activa = True
             st.rerun()
 
-    # --- PANTALLA 2: EL CHECKLIST DINÁMICO ---
+    # --- PANTALLA 2: CHECKLIST ---
     else:
         with st.sidebar:
             st.header("📊 Seguimiento")
             
-            # Recálculo en tiempo real
+            # Cálculo dinámico de respuestas
             respuestas = {i: st.session_state.get(f"p_{i}", "Pendiente") for i in range(len(lista_preguntas))}
             respondidas = sum(1 for v in respuestas.values() if v != "Pendiente")
             cumplen = sum(1 for v in respuestas.values() if v == "Cumple")
             validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
             
-            avance = (respondidas / len(lista_preguntas)) * 100
+            avance = (respondidas / len(lista_preguntas)) * 100 if lista_preguntas else 0
             score_vivo = (cumplen / validas * 100) if validas > 0 else 0
 
             st.metric("Avance", f"{int(avance)}%")
@@ -104,43 +110,40 @@ try:
                 st.session_state.auditoria_activa = False
                 st.rerun()
 
-        st.subheader("📝 Nueva Auditoría de Gestión")
-        col_f1, col_f2 = st.columns(2)
-        fecha = col_f1.date_input("Fecha", datetime.now())
-        auditor = col_f2.text_input("Auditor", placeholder="Tu nombre")
+        st.subheader("📝 Nueva Auditoría")
+        c_f1, c_f2 = st.columns(2)
+        fecha = c_f1.date_input("Fecha", datetime.now())
+        auditor = c_f2.text_input("Nombre del Auditor")
 
         st.markdown("---")
         for i, preg in enumerate(lista_preguntas):
             st.write(f"**{i+1}. {preg}**")
-            st.radio("Opciones:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True, label_visibility="collapsed")
+            st.radio("Opciones:", ["Pendiente", "Cumple", "No Cumple", "N/A"], 
+                     key=f"p_{i}", horizontal=True, label_visibility="collapsed")
             st.markdown("---")
 
-        if st.button("💾 Finalizar y Guardar Historial", use_container_width=True, type="primary"):
+        if st.button("💾 Finalizar y Guardar en Historial", use_container_width=True, type="primary"):
             if avance < 100 or not auditor:
-                st.error("Faltan preguntas por responder o el nombre del auditor.")
+                st.warning("⚠️ Completa todas las preguntas y el nombre del auditor.")
             else:
-                with st.spinner("Guardando registro histórico..."):
-                    # CREAMOS LA NUEVA FILA
-                    nueva_fila = {
-                        "Fecha": str(fecha),
-                        "Auditor": auditor,
-                        "Cumplimiento %": score_vivo,
-                        "Detalles": str(list(respuestas.values())) # Guarda todas las respuestas como texto
-                    }
+                with st.spinner("Registrando..."):
+                    # Preparamos la fila para el historial
+                    nueva_data = pd.DataFrame([{
+                        df_base.columns[0]: str(fecha),
+                        df_base.columns[1]: auditor,
+                        df_base.columns[6]: score_vivo, # Guardamos el % en la Col G
+                        "Detalle": str(list(respuestas.values()))
+                    }])
                     
-                    # Convertimos a DataFrame y concatenamos al historial existente
-                    df_nuevo_registro = pd.DataFrame([nueva_fila])
-                    
-                    # Importante: Aquí 'update' sube el dataframe completo. 
-                    # Asegúrate de que tu hoja de Google Sheets tenga estas columnas preparadas.
-                    df_final = pd.concat([df_base, df_nuevo_registro], ignore_index=True)
-                    
+                    # Añadimos al final del Excel
+                    df_final = pd.concat([df_base, nueva_data], ignore_index=True)
                     conn.update(spreadsheet=url, data=df_final)
+                    
                     st.cache_data.clear()
-                    st.success("¡Auditoría guardada en el historial!")
+                    st.success("✅ Guardado correctamente.")
                     st.balloons()
                     st.session_state.auditoria_activa = False
                     st.rerun()
 
 except Exception as e:
-    st.error(f"Error de conexión o datos: {e}")
+    st.error(f"Error: {e}")
