@@ -6,7 +6,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Auditoría Autociel", layout="wide")
 
-# Función con caché para proteger la cuota de lectura de Google
+# Función con caché para proteger la cuota de lectura
 @st.cache_data(ttl=60)
 def cargar_datos_base(_conn, url):
     try:
@@ -35,10 +35,13 @@ try:
         
         if not df_historico.empty:
             df_plot = df_historico.copy()
-            # Limpieza de fechas: Ignora lo que no sea una fecha válida
+            
+            # LIMPIEZA CRÍTICA: Convertimos Columna A a fecha, ignorando errores (NaT)
             df_plot.iloc[:, 0] = pd.to_datetime(df_plot.iloc[:, 0], errors='coerce')
-            # Filtra solo filas con nota "Cumple" o "No Cumple" y con fecha válida
-            df_plot = df_plot[df_plot.iloc[:, 6].isin(["Cumple", "No Cumple"])].dropna(subset=[df_plot.columns[0]])
+            
+            # Solo tomamos filas con fecha válida y nota real en Columna G
+            df_plot = df_plot.dropna(subset=[df_plot.columns[0]])
+            df_plot = df_plot[df_plot.iloc[:, 6].isin(["Cumple", "No Cumple"])]
 
             if not df_plot.empty:
                 df_plot['Mes'] = df_plot.iloc[:, 0].dt.strftime('%Y-%m')
@@ -46,31 +49,22 @@ try:
                     lambda x: round((x.iloc[:, 6] == "Cumple").sum() / len(x) * 100, 1)
                 ).reset_index(name='Cumplimiento')
 
-                # Creación del Gráfico Profesional
+                # Gráfico Profesional
                 fig = go.Figure()
-                # Barras Verticales
                 fig.add_trace(go.Bar(
                     x=resumen['Mes'], y=resumen['Cumplimiento'],
                     name='Real', marker_color='#007bff',
                     text=resumen['Cumplimiento'].astype(str) + '%', textposition='auto'
                 ))
-                # Línea Roja de Objetivo 90%
                 fig.add_trace(go.Scatter(
                     x=resumen['Mes'], y=[90]*len(resumen),
                     mode='lines', name='Objetivo 90%',
                     line=dict(color='red', width=3, dash='dash')
                 ))
-                
-                fig.update_layout(
-                    xaxis_title="Mes de Auditoría",
-                    yaxis_title="% de Cumplimiento",
-                    yaxis=dict(range=[0, 110]),
-                    template='plotly_white',
-                    height=450
-                )
+                fig.update_layout(yaxis=dict(range=[0, 110]), template='plotly_white', height=450)
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("💡 Aún no hay datos registrados para mostrar el gráfico.")
+                st.info("💡 Aún no hay datos registrados para graficar. Iniciá una auditoría.")
         
         st.markdown("---")
         if st.button("🚀 Iniciar Nueva Auditoría de Gestión", use_container_width=True):
@@ -83,13 +77,12 @@ try:
         p_avance = st.sidebar.empty()
         p_score = st.sidebar.empty()
         
-        if st.sidebar.button("⬅️ Cancelar y Salir"):
+        if st.sidebar.button("⬅️ Cancelar"):
             st.session_state.auditoria_activa = False
             st.rerun()
 
-        st.subheader("📝 Nuevo Registro de Auditoría")
-        # Selector de fecha obligatorio al inicio
-        fecha_auditoria = st.date_input("Seleccione Fecha de Auditoría", datetime.now())
+        st.subheader("📝 Nuevo Registro")
+        fecha_auditoria = st.date_input("Fecha de Auditoría", datetime.now())
         st.markdown("---")
 
         respuestas = {}
@@ -104,24 +97,24 @@ try:
 
         # Cálculos para el panel lateral
         total_p = len(preguntas_df)
-        cont_hechas = sum(1 for v in respuestas.values() if v != "Pendiente")
-        cont_si = sum(1 for v in respuestas.values() if v == "Cumple")
-        cont_validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
+        hechas = sum(1 for v in respuestas.values() if v != "Pendiente")
+        si = sum(1 for v in respuestas.values() if v == "Cumple")
+        validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
         
-        avance = (cont_hechas / total_p) * 100
-        score = (cont_si / cont_validas) * 100 if cont_validas > 0 else 0
+        avance = (hechas / total_p) * 100
+        score = (si / validas) * 100 if validas > 0 else 0
 
         p_avance.metric("Progreso", f"{int(avance)}%")
         p_avance.progress(avance / 100)
-        p_score.metric("Puntaje Actual", f"{int(score)}%", delta=f"{int(score-90)}% vs Obj")
+        p_score.metric("Score Actual", f"{int(score)}%", delta=f"{int(score-90)}% vs Obj")
 
-        # BOTÓN DE GUARDADO FINAL
         if st.button("💾 Finalizar y Guardar en Excel", use_container_width=True):
             if avance < 100:
-                st.warning("⚠️ Debe completar todas las preguntas del checklist.")
+                st.warning("⚠️ Debés completar todas las preguntas.")
             else:
-                with st.spinner("Sincronizando con Google Sheets..."):
+                with st.spinner("Guardando..."):
                     df_final = df_historico.copy()
+                    # Formateamos la fecha para que el gráfico la entienda siempre
                     fecha_str = fecha_auditoria.strftime('%Y-%m-%d')
                     
                     for idx, res in respuestas.items():
@@ -129,10 +122,9 @@ try:
                         df_final.iloc[idx, 0] = fecha_str
                         df_final.iloc[idx, 6] = res
                     
-                    # Escritura en la nube
                     conn.update(spreadsheet=url, data=df_final)
-                    st.cache_data.clear() # Limpia caché para refrescar el gráfico
-                    st.success("✅ Auditoría guardada con éxito.")
+                    st.cache_data.clear()
+                    st.success("✅ Guardado con éxito.")
                     st.balloons()
                     st.session_state.auditoria_activa = False
                     st.rerun()
