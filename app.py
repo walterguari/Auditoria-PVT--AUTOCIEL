@@ -1,21 +1,17 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import plotly.graph_objects as go
 from datetime import datetime
 
 st.set_page_config(page_title="Auditoría Autociel", layout="wide")
 
-# Función con caché para proteger la cuota de lectura
-@st.cache_data(ttl=60)
+# --- CACHÉ PARA EVITAR ERRORES DE CUOTA ---
+@st.cache_data(ttl=300)
 def cargar_datos_base(_conn, url):
-    try:
-        df = _conn.read(spreadsheet=url, ttl=0)
-        # Preguntas en Col E (4) y Descripción en Col F (5)
-        preguntas = df.iloc[:, [4, 5]].dropna(subset=[df.columns[4]])
-        return preguntas, df
-    except Exception:
-        return pd.DataFrame(), pd.DataFrame()
+    df = _conn.read(spreadsheet=url, ttl=0)
+    # Preguntas están en Col E y F (índices 4 y 5)
+    preguntas = df.iloc[:, [4, 5]].dropna(subset=[df.columns[4]])
+    return preguntas, df
 
 if 'auditoria_activa' not in st.session_state:
     st.session_state.auditoria_activa = False
@@ -31,43 +27,20 @@ try:
 
     # --- PANTALLA 1: DASHBOARD ---
     if not st.session_state.auditoria_activa:
-        st.subheader("📊 Cumplimiento Mensual vs Objetivo (90%)")
+        st.subheader("📊 Resumen de Gestión Actual")
         
-        if not df_historico.empty:
-            df_plot = df_historico.copy()
-            
-            # LIMPIEZA CRÍTICA: Convertimos Columna A a fecha, ignorando errores (NaT)
-            df_plot.iloc[:, 0] = pd.to_datetime(df_plot.iloc[:, 0], errors='coerce')
-            
-            # Solo tomamos filas con fecha válida y nota real en Columna G
-            df_plot = df_plot.dropna(subset=[df_plot.columns[0]])
-            df_plot = df_plot[df_plot.iloc[:, 6].isin(["Cumple", "No Cumple"])]
+        # Filtramos solo registros reales en Col G (Índice 6)
+        col_notas = df_historico.iloc[:, 6].dropna()
+        real_auditorias = col_notas[col_notas.isin(["Cumple", "No Cumple"])].count()
+        cant_cumple = (col_notas == "Cumple").sum()
+        cumplimiento_promedio = (cant_cumple / real_auditorias * 100) if real_auditorias > 0 else 0
 
-            if not df_plot.empty:
-                df_plot['Mes'] = df_plot.iloc[:, 0].dt.strftime('%Y-%m')
-                resumen = df_plot.groupby('Mes').apply(
-                    lambda x: round((x.iloc[:, 6] == "Cumple").sum() / len(x) * 100, 1)
-                ).reset_index(name='Cumplimiento')
+        m1, m2 = st.columns(2)
+        m1.metric("Cumplimiento Promedio", f"{int(cumplimiento_promedio)}%")
+        m2.metric("Auditorías Finalizadas", real_auditorias)
 
-                # Gráfico Profesional
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=resumen['Mes'], y=resumen['Cumplimiento'],
-                    name='Real', marker_color='#007bff',
-                    text=resumen['Cumplimiento'].astype(str) + '%', textposition='auto'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=resumen['Mes'], y=[90]*len(resumen),
-                    mode='lines', name='Objetivo 90%',
-                    line=dict(color='red', width=3, dash='dash')
-                ))
-                fig.update_layout(yaxis=dict(range=[0, 110]), template='plotly_white', height=450)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("💡 Aún no hay datos registrados para graficar. Iniciá una auditoría.")
-        
         st.markdown("---")
-        if st.button("🚀 Iniciar Nueva Auditoría de Gestión", use_container_width=True):
+        if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True):
             st.session_state.auditoria_activa = True
             st.rerun()
 
@@ -75,59 +48,52 @@ try:
     else:
         st.sidebar.header("📊 Seguimiento")
         p_avance = st.sidebar.empty()
-        p_score = st.sidebar.empty()
+        p_cumplimiento = st.sidebar.empty()
         
-        if st.sidebar.button("⬅️ Cancelar"):
+        if st.sidebar.button("⬅️ Volver al Tablero"):
             st.session_state.auditoria_activa = False
             st.rerun()
 
-        st.subheader("📝 Nuevo Registro")
-        fecha_auditoria = st.date_input("Fecha de Auditoría", datetime.now())
-        st.markdown("---")
-
         respuestas = {}
-        for index, row in preguntas_df.iterrows():
-            st.write(f"**{row.iloc[0]}**")
-            if pd.notnull(row.iloc[1]): st.caption(f"ℹ️ {row.iloc[1]}")
-            
-            opcion = st.radio("Nota:", ["Pendiente", "Cumple", "No Cumple", "N/A"], 
-                              key=f"p_{index}", horizontal=True, label_visibility="collapsed")
-            respuestas[index] = opcion
-            st.markdown("---")
-
-        # Cálculos para el panel lateral
-        total_p = len(preguntas_df)
-        hechas = sum(1 for v in respuestas.values() if v != "Pendiente")
-        si = sum(1 for v in respuestas.values() if v == "Cumple")
-        validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
+        st.subheader("📝 Checklist de Gestión")
         
-        avance = (hechas / total_p) * 100
-        score = (si / validas) * 100 if validas > 0 else 0
+        for index, row in preguntas_df.iterrows():
+            with st.container():
+                st.write(f"**{row.iloc[0]}**")
+                opcion = st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], 
+                                  key=f"p_{index}", horizontal=True, label_visibility="collapsed")
+                respuestas[index] = opcion
+                st.markdown("---")
 
-        p_avance.metric("Progreso", f"{int(avance)}%")
+        # Cálculos
+        respondidas = sum(1 for v in respuestas.values() if v != "Pendiente")
+        cumplen = sum(1 for v in respuestas.values() if v == "Cumple")
+        validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
+        avance = (respondidas / len(preguntas_df)) * 100
+        cumplimiento_actual = (cumplen / validas) * 100 if validas > 0 else 0
+
+        p_avance.metric("Avance", f"{int(avance)}%")
         p_avance.progress(avance / 100)
-        p_score.metric("Score Actual", f"{int(score)}%", delta=f"{int(score-90)}% vs Obj")
+        p_cumplimiento.metric("Cumplimiento", f"{int(cumplimiento_actual)}%")
 
+        # --- LÓGICA DE GUARDADO REAL ---
         if st.button("💾 Finalizar y Guardar en Excel", use_container_width=True):
             if avance < 100:
-                st.warning("⚠️ Debés completar todas las preguntas.")
+                st.warning("Debe completar todo el checklist.")
             else:
-                with st.spinner("Guardando..."):
-                    df_final = df_historico.copy()
-                    # Formateamos la fecha para que el gráfico la entienda siempre
-                    fecha_str = fecha_auditoria.strftime('%Y-%m-%d')
-                    
+                with st.spinner("Guardando en Google Sheets..."):
+                    # Preparamos los datos para la columna G
+                    # Actualizamos el DataFrame original con las nuevas notas
                     for idx, res in respuestas.items():
-                        # Col A (0): Fecha | Col G (6): Nota
-                        df_final.iloc[idx, 0] = fecha_str
-                        df_final.iloc[idx, 6] = res
+                        df_historico.iat[idx, 6] = res
                     
-                    conn.update(spreadsheet=url, data=df_final)
-                    st.cache_data.clear()
-                    st.success("✅ Guardado con éxito.")
+                    # Enviamos los datos al Sheets
+                    conn.update(spreadsheet=url, data=df_historico)
+                    
+                    st.cache_data.clear() # Limpiamos caché para que el tablero se actualice
+                    st.success("✅ ¡Guardado con éxito! Ya puedes verlo en el Excel.")
                     st.balloons()
-                    st.session_state.auditoria_activa = False
-                    st.rerun()
+                    st.session_state.auditoria_activa = False # Volver al inicio
 
 except Exception as e:
-    st.error(f"Error técnico: {e}")
+    st.error(f"Error: {e}")
