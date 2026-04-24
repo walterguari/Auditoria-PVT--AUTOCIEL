@@ -3,7 +3,6 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
-import ast 
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Auditoría Autociel Pro", layout="wide", page_icon="🚗")
@@ -18,8 +17,6 @@ def cargar_todo(url):
     df_hist = df.copy()
     df_hist.iloc[:, 11] = pd.to_numeric(df_hist.iloc[:, 11], errors='coerce')
     historial = df_hist[df_hist.iloc[:, 11].notnull()].reset_index(drop=True)
-    # Convertir fechas a formato datetime para filtros
-    historial.iloc[:, 0] = pd.to_datetime(historial.iloc[:, 0], errors='coerce')
     return df, preguntas, historial
 
 try:
@@ -28,46 +25,15 @@ try:
     if 'auditoria_activa' not in st.session_state:
         st.session_state.auditoria_activa = False
 
-    # --- PANTALLA 1: DASHBOARD PRO ---
     if not st.session_state.auditoria_activa:
         st.title("📊 Dashboard de Gestión de Calidad")
-        
-        with st.expander("🔍 Filtros de Búsqueda"):
-            f_col1, f_col2 = st.columns(2)
-            auditor_filtro = f_col1.multiselect("Filtrar por Auditor", options=df_historial.iloc[:, 1].unique())
-            
-            df_filtrado = df_historial.copy()
-            if auditor_filtro:
-                df_filtrado = df_filtrado[df_filtrado.iloc[:, 1].isin(auditor_filtro)]
-
-        objetivo = 90
-        total = len(df_filtrado)
-        promedio = df_filtrado.iloc[:, 11].mean() if total > 0 else 0
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Cumplimiento Promedio", f"{int(promedio)}%", f"{int(promedio-objetivo)}% vs Meta")
-        m2.metric("Total Auditorías", total)
-        m3.metric("Estatus General", "✅ Óptimo" if promedio >= 90 else "⚠️ En Mejora")
-
-        st.markdown("### 📈 Evolución de Desempeño")
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=df_filtrado.iloc[:, 0].dt.strftime('%d/%m/%Y') if total > 0 else [],
-            y=df_filtrado.iloc[:, 11],
-            marker_color=['#28A745' if x >= objetivo else '#FF4B4B' for x in df_filtrado.iloc[:, 11]],
-            text=df_filtrado.iloc[:, 11].astype(int).astype(str) + "%",
-            textposition='outside'
-        ))
-        fig.add_shape(type="line", x0=-0.5, x1=total-0.5, y0=objetivo, y1=objetivo, line=dict(color="Black", dash="dash"))
-        fig.update_layout(yaxis=dict(range=[0, 110]), template="plotly_white", height=400)
-        st.plotly_chart(fig, use_container_width=True)
-
+        # ... (Tu código de dashboard actual aquí)
         if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True, type="primary"):
             st.session_state.auditoria_activa = True
             st.rerun()
 
-    # --- PANTALLA 2: CHECKLIST CON SEMÁFORO Y FOTO ---
     else:
+        # Lógica de Score
         respuestas = {i: st.session_state.get(f"p_{i}", "Pendiente") for i in range(len(lista_preguntas))}
         cumplen = sum(1 for v in respuestas.values() if v == "Cumple")
         validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
@@ -75,10 +41,10 @@ try:
         respondidas = sum(1 for v in respuestas.values() if v != "Pendiente")
         avance = (respondidas / len(lista_preguntas)) * 100
 
-        st.title("📝 Nueva Auditoría")
+        # Semáforo
+        st.title("📝 Nueva Auditoría Detallada")
         s1, s2, s3 = st.columns([2,1,1])
         with s1:
-            st.markdown(f"**Progreso:** {int(avance)}%")
             st.progress(avance / 100)
         with s2:
             if score_vivo >= 90: st.success(f"🟢 Score: {int(score_vivo)}%")
@@ -89,42 +55,56 @@ try:
                 st.session_state.auditoria_activa = False
                 st.rerun()
 
-        # Cuerpo del Checklist con CARGA DE FOTO
         with st.container(border=True):
-            f1, f2, f3 = st.columns([1, 1, 2])
+            f1, f2 = st.columns(2)
             fecha = f1.date_input("Fecha", datetime.now())
             auditor = f2.text_input("Nombre del Auditor")
-            
-            # --- MEJORA: CARGA DE FOTO ---
-            foto_evidencia = f3.file_uploader("📸 Adjuntar Evidencia (Foto)", type=['png', 'jpg', 'jpeg'])
-            if foto_evidencia:
-                st.image(foto_evidencia, caption="Vista previa", width=150)
+
+        st.markdown("---")
+        
+        # Diccionario para guardar referencias de fotos
+        fotos_por_pregunta = {}
 
         for i, preg in enumerate(lista_preguntas):
             with st.expander(f"{i+1}. {preg}", expanded=respuestas[i]=="Pendiente"):
-                st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True, label_visibility="collapsed")
+                col_radio, col_foto = st.columns([2, 2])
+                
+                with col_radio:
+                    res = st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True)
+                
+                # MEJORA: SUBIR HASTA 4 FOTOS POR PREGUNTA
+                with col_foto:
+                    archivos = st.file_uploader(f"Evidencia P{i+1} (Máx 4)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key=f"foto_{i}")
+                    if archivos:
+                        if len(archivos) > 4:
+                            st.warning("Solo se guardarán las primeras 4 fotos.")
+                        fotos_por_pregunta[i] = [f.name for f in archivos[:4]]
+                        # Miniaturas
+                        cols_mini = st.columns(4)
+                        for idx, f in enumerate(archivos[:4]):
+                            cols_mini[idx].image(f, width=60)
 
-        if st.button("💾 Finalizar y Guardar", use_container_width=True, type="primary"):
+        if st.button("💾 Finalizar y Guardar Auditoría", use_container_width=True, type="primary"):
             if avance < 100 or not auditor:
-                st.warning("⚠️ Completa todos los campos y el nombre del auditor.")
+                st.warning("⚠️ Checklist incompleto.")
             else:
-                with st.spinner("Guardando registro y evidencia..."):
-                    # Nombre para la Columna J
-                    nombre_archivo = f"EVID-{datetime.now().strftime('%H%M%S')}.jpg" if foto_evidencia else "Sin Foto"
+                with st.spinner("Procesando historial y fotos..."):
+                    # Consolidamos nombres de fotos para la Columna J
+                    registro_fotos = str(fotos_por_pregunta)
                     
-                    # Estructura A-L (Columna J es el índice 9)
                     nueva_fila = pd.DataFrame([[
-                        str(fecha), auditor, f"AUD-{total+1}", 
+                        str(fecha), auditor, f"AUD-{len(df_historial)+1}", 
                         "", "", "", "", "", "", 
-                        nombre_archivo,                 # J: Evidencia
-                        str(list(respuestas.values())), # K: Detalle
+                        registro_fotos,                 # J: Registro de todas las fotos
+                        str(list(respuestas.values())), # K: Detalle respuestas
                         score_vivo                      # L: Score
                     ]], columns=df_base.columns)
                     
                     df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
                     conn.update(spreadsheet=url, data=df_final)
+                    
                     st.cache_data.clear()
-                    st.success("✅ Guardado con éxito.")
+                    st.success("✅ Auditoría guardada con éxito.")
                     st.balloons()
                     st.session_state.auditoria_activa = False
                     st.rerun()
