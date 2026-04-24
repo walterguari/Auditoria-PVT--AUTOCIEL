@@ -13,14 +13,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 @st.cache_data(ttl=60)
 def cargar_todo(url):
     df = conn.read(spreadsheet=url, ttl=0)
-    # 1. Extraer preguntas (Columna E / Índice 4)
+    # 1. Preguntas en Columna E (Índice 4)
     preguntas = df.iloc[:, 4].dropna().unique().tolist()
     
-    # 2. Filtrar Historial (Filas que tienen un valor numérico en la Columna G / Índice 6)
-    # Convertimos la columna a numérico por si acaso
-    df_temp = df.copy()
-    df_temp.iloc[:, 6] = pd.to_numeric(df_temp.iloc[:, 6], errors='coerce')
-    historial = df_temp[df_temp.iloc[:, 6].notnull()] 
+    # 2. Limpieza de datos para historial (Columna G / Índice 6)
+    df_hist = df.copy()
+    # Forzamos que la columna de notas sea numérica para el gráfico
+    df_hist.iloc[:, 6] = pd.to_numeric(df_hist.iloc[:, 6], errors='coerce')
+    # Filtramos solo las que tienen un número real
+    historial = df_hist[df_hist.iloc[:, 6].notnull()].reset_index(drop=True)
     
     return df, preguntas, historial
 
@@ -41,48 +42,42 @@ try:
         objetivo = 90
         total_auditorias = len(df_historial)
         
+        # Valores por defecto si no hay datos
+        ultimo_score = 0
+        cumplimiento_promedio = 0
+        
         if total_auditorias > 0:
             ultimo_score = df_historial.iloc[-1, 6]
             cumplimiento_promedio = df_historial.iloc[:, 6].mean()
-        else:
-            ultimo_score = 0
-            cumplimiento_promedio = 0
 
-        # MÉTRICAS PRINCIPALES
+        # MÉTRICAS
         m1, m2, m3 = st.columns(3)
         m1.metric("Cumplimiento Promedio", f"{int(cumplimiento_promedio)}%", 
-                  delta=f"{int(cumplimiento_promedio - objetivo)}% vs Meta")
+                  delta=f"{int(cumplimiento_promedio - objetivo)}% vs Meta" if total_auditorias > 0 else None)
         m2.metric("Auditorías Realizadas", total_auditorias)
         m3.metric("Último Resultado", f"{int(ultimo_score)}%")
 
         st.markdown("### Evolución de Resultados")
         
-        # GRÁFICO DE TENDENCIA (Líneas)
-        fig_evolucion = go.Figure()
-        
-        # Línea de tendencia
-        fig_evolucion.add_trace(go.Scatter(
-            x=list(range(1, total_auditorias + 1)),
-            y=df_historial.iloc[:, 6] if total_auditorias > 0 else [0],
-            mode='lines+markers',
-            name='Resultado %',
-            line=dict(color='#FF4B4B', width=3),
-            marker=dict(size=10)
-        ))
-        
-        # Línea de Meta (90%)
-        fig_evolucion.add_shape(
-            type="line", x0=1, x1=max(total_auditorias, 1), y0=objetivo, y1=objetivo,
-            line=dict(color="Black", width=2, dash="dash")
-        )
-
-        fig_evolucion.update_layout(
-            yaxis=dict(range=[0, 105], title="Porcentaje %"),
-            xaxis=dict(title="Número de Auditoría"),
-            height=400,
-            template="plotly_white"
-        )
-        st.plotly_chart(fig_evolucion, use_container_width=True)
+        if total_auditorias > 0:
+            fig = go.Figure()
+            # Tendencia
+            fig.add_trace(go.Scatter(
+                x=list(range(1, total_auditorias + 1)),
+                y=df_historial.iloc[:, 6],
+                mode='lines+markers',
+                name='Cumplimiento %',
+                line=dict(color='#FF4B4B', width=3),
+                marker=dict(size=10, color='#FF4B4B')
+            ))
+            # Línea de Meta
+            fig.add_shape(type="line", x0=1, x1=total_auditorias, y0=objetivo, y1=objetivo,
+                         line=dict(color="Black", width=2, dash="dash"))
+            
+            fig.update_layout(yaxis=dict(range=[0, 105]), template="plotly_white", height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("💡 Aún no hay auditorías registradas. Inicia una para ver el gráfico.")
 
         if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True, type="primary"):
             st.session_state.auditoria_activa = True
@@ -93,7 +88,6 @@ try:
         with st.sidebar:
             st.header("📊 Seguimiento")
             
-            # Cálculo dinámico de respuestas
             respuestas = {i: st.session_state.get(f"p_{i}", "Pendiente") for i in range(len(lista_preguntas))}
             respondidas = sum(1 for v in respuestas.values() if v != "Pendiente")
             cumplen = sum(1 for v in respuestas.values() if v == "Cumple")
@@ -111,39 +105,38 @@ try:
                 st.rerun()
 
         st.subheader("📝 Nueva Auditoría")
-        c_f1, c_f2 = st.columns(2)
-        fecha = c_f1.date_input("Fecha", datetime.now())
-        auditor = c_f2.text_input("Nombre del Auditor")
+        c1, c2 = st.columns(2)
+        fecha = c1.date_input("Fecha", datetime.now())
+        auditor = c2.text_input("Nombre del Auditor")
 
         st.markdown("---")
         for i, preg in enumerate(lista_preguntas):
             st.write(f"**{i+1}. {preg}**")
-            st.radio("Opciones:", ["Pendiente", "Cumple", "No Cumple", "N/A"], 
+            st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], 
                      key=f"p_{i}", horizontal=True, label_visibility="collapsed")
             st.markdown("---")
 
-        if st.button("💾 Finalizar y Guardar en Historial", use_container_width=True, type="primary"):
+        if st.button("💾 Guardar Auditoría", use_container_width=True, type="primary"):
             if avance < 100 or not auditor:
-                st.warning("⚠️ Completa todas las preguntas y el nombre del auditor.")
+                st.warning("⚠️ Completa todo el checklist y pon tu nombre.")
             else:
-                with st.spinner("Registrando..."):
-                    # Preparamos la fila para el historial
-                    nueva_data = pd.DataFrame([{
+                with st.spinner("Guardando en el historial..."):
+                    # Creamos la nueva fila asegurando que los nombres de columnas coincidan
+                    nueva_fila = pd.DataFrame([{
                         df_base.columns[0]: str(fecha),
                         df_base.columns[1]: auditor,
-                        df_base.columns[6]: score_vivo, # Guardamos el % en la Col G
-                        "Detalle": str(list(respuestas.values()))
+                        df_base.columns[6]: score_vivo, # Guardar el % en la Col G
+                        "Detalles": str(list(respuestas.values()))
                     }])
                     
-                    # Añadimos al final del Excel
-                    df_final = pd.concat([df_base, nueva_data], ignore_index=True)
+                    df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
                     conn.update(spreadsheet=url, data=df_final)
                     
                     st.cache_data.clear()
-                    st.success("✅ Guardado correctamente.")
+                    st.success("✅ Auditoría registrada correctamente.")
                     st.balloons()
                     st.session_state.auditoria_activa = False
                     st.rerun()
 
 except Exception as e:
-    st.error(f"Error: {e}")
+    st.error(f"Error detectado: {e}")
