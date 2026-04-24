@@ -3,10 +3,9 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Portal Auditoría Autociel", layout="wide")
+st.set_page_config(page_title="Auditoría de Gestión Autociel", layout="wide")
 
 # --- LÓGICA DE ESTADO DE SESIÓN ---
-# Esto sirve para que la app "recuerde" si ya presionaste el botón de iniciar
 if 'auditoria_activa' not in st.session_state:
     st.session_state.auditoria_activa = False
 
@@ -18,44 +17,41 @@ url = "https://docs.google.com/spreadsheets/d/1JYJrSU9aqdG7OqqBwa67DJjTui2DHqsmy
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_base = conn.read(spreadsheet=url, ttl=0)
+    # Filtramos preguntas de la Columna E y descripciones de la F
     preguntas_df = df_base.iloc[:, [4, 5]].dropna(subset=[df_base.columns[4]])
     total_preguntas = len(preguntas_df)
 
-    # --- PANTALLA INICIAL: CONFIGURACIÓN ---
+    # --- PANTALLA 1: INICIO RÁPIDO ---
     if not st.session_state.auditoria_activa:
-        st.subheader("⚙️ Configuración Inicial")
+        st.subheader("📍 Selección de Sucursal")
         col1, col2 = st.columns(2)
         with col1:
-            sucursal = st.selectbox("Sucursal a Auditar", ["Jujuy", "Salta", "Tartagal"])
-            asesor = st.selectbox("Asesor de Servicio", ["Haydeé", "Antonio", "Otro"])
+            sucursal_auditar = st.selectbox("Sucursal", ["Jujuy", "Salta", "Tartagal"])
         with col2:
-            unidad = st.text_input("VIN / Dominio de la Unidad")
             fecha_auditoria = st.date_input("Fecha", datetime.now())
 
         st.markdown("---")
         if st.button("🚀 Iniciar Auditoría de Gestión", use_container_width=True):
-            if unidad: # Validamos que al menos ponga el VIN
-                st.session_state.auditoria_activa = True
-                st.rerun()
-            else:
-                st.warning("Por favor, ingrese el VIN o Dominio antes de iniciar.")
+            st.session_state.sucursal = sucursal_auditar # Guardamos la sucursal
+            st.session_state.auditoria_activa = True
+            st.rerun()
 
-    # --- PANTALLA SECUNDARIA: EL CHECKLIST ---
+    # --- PANTALLA 2: EL CHECKLIST INTERACTIVO ---
     else:
-        # Botón para volver o cancelar
-        if st.sidebar.button("⬅️ Cancelar / Reiniciar"):
+        # Panel Lateral con indicadores
+        st.sidebar.header("📊 Indicadores")
+        placeholder_avance = st.sidebar.empty()
+        placeholder_cumplimiento = st.sidebar.empty()
+        
+        st.sidebar.markdown("---")
+        st.sidebar.write(f"📍 **Sucursal:** {st.session_state.sucursal}")
+        
+        if st.sidebar.button("⬅️ Reiniciar"):
             st.session_state.auditoria_activa = False
             st.rerun()
 
-        # Indicadores en el Sidebar
-        st.sidebar.header("📊 Seguimiento")
-        placeholder_avance = st.sidebar.empty()
-        placeholder_cumplimiento = st.sidebar.empty()
-        st.sidebar.info(f"📍 **Sucursal:** {sucursal}\n\n👤 **Asesor:** {asesor}\n\n🚘 **Unidad:** {unidad}")
-
         respuestas = {}
-        
-        st.subheader(f"📝 Checklist de Evaluación - {sucursal}")
+        st.subheader(f"📝 Checklist: {st.session_state.sucursal}")
         
         for index, row in preguntas_df.iterrows():
             with st.container():
@@ -89,16 +85,14 @@ try:
         placeholder_avance.progress(porc_avance / 100)
         
         color_delta = "normal" if porc_cumplimiento >= 80 else "inverse"
-        placeholder_cumplimiento.metric("Cumplimiento", f"{int(porc_cumplimiento)}%", 
-                                       delta=f"{int(porc_cumplimiento)}% Score", delta_color=color_delta)
+        placeholder_cumplimiento.metric("Cumplimiento", f"{int(porc_cumplimiento)}%", delta_color=color_delta)
 
-        if st.button("💾 Finalizar y Enviar Reporte", use_container_width=True):
+        if st.button("💾 Finalizar y Guardar Reporte", use_container_width=True):
             if porc_avance < 100:
                 st.warning(f"Faltan responder {total_preguntas - cont_respondidas} preguntas.")
             else:
-                st.success("Auditoría enviada correctamente a la base de datos.")
+                st.success("Auditoría finalizada con éxito.")
                 st.balloons()
-                # Opcional: st.session_state.auditoria_activa = False (para volver al inicio)
 
 except Exception as e:
     st.error(f"Error técnico: {e}")
