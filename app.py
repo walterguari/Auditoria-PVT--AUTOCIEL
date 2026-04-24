@@ -3,7 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
-import ast # Para convertir el texto de la base de datos en lista
+import ast 
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Auditoría Autociel Pro", layout="wide", page_icon="🚗")
@@ -32,17 +32,14 @@ try:
     if not st.session_state.auditoria_activa:
         st.title("📊 Dashboard de Gestión de Calidad")
         
-        # --- SUGERENCIA 2: FILTROS ---
         with st.expander("🔍 Filtros de Búsqueda"):
             f_col1, f_col2 = st.columns(2)
             auditor_filtro = f_col1.multiselect("Filtrar por Auditor", options=df_historial.iloc[:, 1].unique())
             
-            # Aplicar filtros
             df_filtrado = df_historial.copy()
             if auditor_filtro:
                 df_filtrado = df_filtrado[df_filtrado.iloc[:, 1].isin(auditor_filtro)]
 
-        # Métricas
         objetivo = 90
         total = len(df_filtrado)
         promedio = df_filtrado.iloc[:, 11].mean() if total > 0 else 0
@@ -52,7 +49,6 @@ try:
         m2.metric("Total Auditorías", total)
         m3.metric("Estatus General", "✅ Óptimo" if promedio >= 90 else "⚠️ En Mejora")
 
-        # Gráfico de Barras Verticales
         st.markdown("### 📈 Evolución de Desempeño")
         fig = go.Figure()
         fig.add_trace(go.Bar(
@@ -66,19 +62,12 @@ try:
         fig.update_layout(yaxis=dict(range=[0, 110]), template="plotly_white", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- SUGERENCIA 3: PUNTOS CRÍTICOS ---
-        if total > 0:
-            st.markdown("### 🚨 Análisis de Oportunidades (Puntos más fallados)")
-            # Aquí iría la lógica avanzada para desglosar la columna K (Detalle)
-            st.info("💡 Consejo: Revisa los puntos donde el cumplimiento es menor al 90% para priorizar capacitación.")
-
         if st.button("🚀 Iniciar Nueva Auditoría", use_container_width=True, type="primary"):
             st.session_state.auditoria_activa = True
             st.rerun()
 
-    # --- PANTALLA 2: CHECKLIST CON SEMÁFORO ---
+    # --- PANTALLA 2: CHECKLIST CON SEMÁFORO Y FOTO ---
     else:
-        # Cálculos de score en tiempo real
         respuestas = {i: st.session_state.get(f"p_{i}", "Pendiente") for i in range(len(lista_preguntas))}
         cumplen = sum(1 for v in respuestas.values() if v == "Cumple")
         validas = sum(1 for v in respuestas.values() if v in ["Cumple", "No Cumple"])
@@ -86,46 +75,59 @@ try:
         respondidas = sum(1 for v in respuestas.values() if v != "Pendiente")
         avance = (respondidas / len(lista_preguntas)) * 100
 
-        # --- SUGERENCIA 1: SEMÁFORO VISUAL ---
         st.title("📝 Nueva Auditoría")
         s1, s2, s3 = st.columns([2,1,1])
         with s1:
             st.markdown(f"**Progreso:** {int(avance)}%")
             st.progress(avance / 100)
         with s2:
-            if score_vivo >= 90:
-                st.success(f"🟢 Score: {int(score_vivo)}%")
-            elif score_vivo >= 75:
-                st.warning(f"🟡 Score: {int(score_vivo)}%")
-            else:
-                st.error(f"🔴 Score: {int(score_vivo)}%")
+            if score_vivo >= 90: st.success(f"🟢 Score: {int(score_vivo)}%")
+            elif score_vivo >= 75: st.warning(f"🟡 Score: {int(score_vivo)}%")
+            else: st.error(f"🔴 Score: {int(score_vivo)}%")
         with s3:
             if st.button("⬅️ Salir"):
                 st.session_state.auditoria_activa = False
                 st.rerun()
 
-        # Cuerpo del Checklist
+        # Cuerpo del Checklist con CARGA DE FOTO
         with st.container(border=True):
-            f1, f2 = st.columns(2)
+            f1, f2, f3 = st.columns([1, 1, 2])
             fecha = f1.date_input("Fecha", datetime.now())
             auditor = f2.text_input("Nombre del Auditor")
+            
+            # --- MEJORA: CARGA DE FOTO ---
+            foto_evidencia = f3.file_uploader("📸 Adjuntar Evidencia (Foto)", type=['png', 'jpg', 'jpeg'])
+            if foto_evidencia:
+                st.image(foto_evidencia, caption="Vista previa", width=150)
 
         for i, preg in enumerate(lista_preguntas):
-            with st.expander(f"{i+1}. {preg}", expanded=True):
+            with st.expander(f"{i+1}. {preg}", expanded=respuestas[i]=="Pendiente"):
                 st.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True, label_visibility="collapsed")
 
         if st.button("💾 Finalizar y Guardar", use_container_width=True, type="primary"):
             if avance < 100 or not auditor:
-                st.warning("⚠️ Completa todos los campos.")
+                st.warning("⚠️ Completa todos los campos y el nombre del auditor.")
             else:
-                nueva_fila = pd.DataFrame([[str(fecha), auditor, "AUD", "", "", "", "", "", "", "", str(list(respuestas.values())), score_vivo]], columns=df_base.columns)
-                df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
-                conn.update(spreadsheet=url, data=df_final)
-                st.cache_data.clear()
-                st.success("✅ Guardado con éxito.")
-                st.balloons()
-                st.session_state.auditoria_activa = False
-                st.rerun()
+                with st.spinner("Guardando registro y evidencia..."):
+                    # Nombre para la Columna J
+                    nombre_archivo = f"EVID-{datetime.now().strftime('%H%M%S')}.jpg" if foto_evidencia else "Sin Foto"
+                    
+                    # Estructura A-L (Columna J es el índice 9)
+                    nueva_fila = pd.DataFrame([[
+                        str(fecha), auditor, f"AUD-{total+1}", 
+                        "", "", "", "", "", "", 
+                        nombre_archivo,                 # J: Evidencia
+                        str(list(respuestas.values())), # K: Detalle
+                        score_vivo                      # L: Score
+                    ]], columns=df_base.columns)
+                    
+                    df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
+                    conn.update(spreadsheet=url, data=df_final)
+                    st.cache_data.clear()
+                    st.success("✅ Guardado con éxito.")
+                    st.balloons()
+                    st.session_state.auditoria_activa = False
+                    st.rerun()
 
 except Exception as e:
     st.error(f"Error: {e}")
