@@ -7,34 +7,46 @@ import plotly.graph_objects as go
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Portal de Auditoría Autociel", layout="wide", page_icon="🚗")
 
-# URLs de las hojas (Bases de datos)
+# --- URLs DE BASES DE DATOS ---
 URL_GESTION = "https://docs.google.com/spreadsheets/d/1JYJrSU9aqdG7OqqBwa67DJjTui2DHqsmy7E8dNyMbok/edit#gid=1392263871"
 URL_CCS = "https://docs.google.com/spreadsheets/d/1l_f2DudAEmL3lxLdwQttk0WT5fqmRueK7dootnFL6Ak/edit#gid=652621674"
 URL_CITAS = "https://docs.google.com/spreadsheets/d/1XwagKHRWZLrado40tNN4UjLkSn9vKqJlnD4JF1vaTkk/edit#gid=230929161"
+URL_ENTREGA = "https://docs.google.com/spreadsheets/d/1HcNxmodD4QbzpNYSBkzmRWyb5NlUbhvBinpxVCMCokI/edit#gid=1499782964"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- SELECTOR INICIAL ---
+# --- SELECTOR INICIAL (4 OPCIONES) ---
 if 'proceso_seleccionado' not in st.session_state:
     st.title("🚀 Bienvenido al Portal de Calidad Autociel")
     st.subheader("Seleccione el proceso de auditoría:")
     
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b = st.columns(2)
+    col_c, col_d = st.columns(2)
+    
     with col_a:
         if st.button("📊 GESTIÓN\n(Gerente Post Venta)", use_container_width=True):
             st.session_state.proceso_seleccionado = "GESTION"
             st.session_state.url_actual = URL_GESTION
             st.rerun()
+            
     with col_b:
         if st.button("🛠️ CCS\n(Sector Servicio)", use_container_width=True):
             st.session_state.proceso_seleccionado = "CCS"
             st.session_state.url_actual = URL_CCS
             st.rerun()
+
     with col_c:
         if st.button("📅 CITAS\n(Agendamiento)", use_container_width=True):
             st.session_state.proceso_seleccionado = "CITAS"
             st.session_state.url_actual = URL_CITAS
             st.rerun()
+
+    with col_d:
+        if st.button("📦 ENTREGA 0KM\n(Recepción y Prep.)", use_container_width=True):
+            st.session_state.proceso_seleccionado = "ENTREGA"
+            st.session_state.url_actual = URL_ENTREGA
+            st.rerun()
+            
     st.stop()
 
 # --- CARGA DE DATOS ---
@@ -51,7 +63,7 @@ def cargar_todo(url):
         historial = df_hist[df_hist.iloc[:, 11].notnull()].reset_index(drop=True)
         historial.iloc[:, 0] = pd.to_datetime(historial.iloc[:, 0], errors='coerce')
         return df, lista_preg, mapa_desc, historial
-    except Exception:
+    except:
         return None, [], {}, pd.DataFrame()
 
 df_base, lista_preguntas, mapa_descripciones, df_historial = cargar_todo(st.session_state.url_actual)
@@ -109,10 +121,12 @@ else:
         fecha_a = f1.date_input("Fecha", datetime.now())
         auditor_n = f2.text_input("Nombre del Auditor")
         
-        # INGRESO MANUAL DIRECTO
         persona_final = ""
-        if st.session_state.proceso_seleccionado in ["CCS", "CITAS"]:
-            label_auditado = "Persona Auditada" if st.session_state.proceso_seleccionado == "CCS" else "Operador Auditado"
+        if st.session_state.proceso_seleccionado in ["CCS", "CITAS", "ENTREGA"]:
+            label_auditado = "Persona Auditada"
+            if st.session_state.proceso_seleccionado == "CITAS": label_auditado = "Operador Auditado"
+            if st.session_state.proceso_seleccionado == "ENTREGA": label_auditado = "Responsable Entrega/Prep."
+            
             persona_final = f3.text_input(label_auditado, placeholder="Escriba el nombre completo...")
         else:
             f3.empty()
@@ -125,7 +139,7 @@ else:
             
             c_r, c_f, c_o = st.columns([1, 1, 1])
             res = c_r.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True)
-            archivos = c_f.file_uploader(f"Evidencia (Máx 6)", type=['jpg','png','jpeg'], accept_multiple_files=True, key=f"f_{i}")
+            archivos = c_f.file_uploader(f"Fotos (Máx 6)", type=['jpg','png','jpeg'], accept_multiple_files=True, key=f"f_{i}")
             obs = c_o.text_area("Observaciones:", key=f"obs_{i}", height=100)
             
             if archivos or obs:
@@ -139,7 +153,7 @@ else:
         if contestadas < len(lista_preguntas) or not auditor_n or (st.session_state.proceso_seleccionado != "GESTION" and not persona_final):
             st.warning("⚠️ Checklist incompleto o falta identificar al auditado.")
         else:
-            with st.spinner("Guardando..."):
+            with st.spinner("Guardando en la nube..."):
                 nueva_fila = pd.DataFrame([[
                     str(fecha_a), 
                     auditor_n, 
@@ -154,7 +168,7 @@ else:
                 df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
                 conn.update(spreadsheet=st.session_state.url_actual, data=df_final)
                 st.cache_data.clear()
-                st.success("✅ Guardado correctamente.")
+                st.success(f"✅ ¡La auditoría de {st.session_state.proceso_seleccionado} se guardó correctamente!")
                 st.balloons()
                 st.session_state.auditoria_activa = False
                 st.rerun()
