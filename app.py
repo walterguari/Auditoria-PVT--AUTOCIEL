@@ -42,6 +42,7 @@ if 'proceso_seleccionado' not in st.session_state:
 def cargar_todo(url, proceso):
     try:
         df = conn.read(spreadsheet=url, ttl=0)
+        # Col F(5)=Pregunta, Col G(6)=Descripción, Col L(11)=Score
         df_preg = df.iloc[:, [5, 6]].dropna(subset=[df.columns[5]])
         mapa_desc = dict(zip(df_preg.iloc[:, 0], df_preg.iloc[:, 1]))
         lista_preg = list(mapa_desc.keys())
@@ -108,31 +109,24 @@ else:
         fecha_a = f1.date_input("Fecha", datetime.now())
         auditor_n = f2.text_input("Nombre del Auditor")
         
-        # LOGICA DE NOMBRE PERSONALIZADO
+        # CAMPO DE TEXTO DIRECTO PARA NOMBRE (Sin sugerencias)
         persona_final = ""
         if st.session_state.proceso_seleccionado in ["CCS", "CITAS"]:
-            opciones = ["Haydeé", "Antonio"] if st.session_state.proceso_seleccionado == "CCS" else ["Gustavo", "Dani"]
-            opciones.append("Escribir nombre...")
-            
-            seleccion = f3.selectbox("Persona Auditada", opciones)
-            
-            if seleccion == "Escribir nombre...":
-                persona_final = f3.text_input("Ingrese el nombre completo:")
-            else:
-                persona_final = seleccion
+            label_auditado = "Persona Auditada" if st.session_state.proceso_seleccionado == "CCS" else "Operador Auditado"
+            persona_final = f3.text_input(f"{label_auditado}:", placeholder="Escriba el nombre completo...")
         else:
             f3.empty()
 
     datos_adicionales = {}
     for i, preg in enumerate(lista_preguntas):
         with st.expander(f"{i+1}. {preg}", expanded=resp_actuales[i] in ["Pendiente", "No Cumple"]):
-            with st.popover("📖 Guía"):
-                st.info(mapa_descripciones.get(preg, "Sin descripción."))
+            with st.popover("📖 Guía de Auditoría"):
+                st.info(mapa_descripciones.get(preg, "Sin descripción disponible."))
             
             c_r, c_f, c_o = st.columns([1, 1, 1])
             res = c_r.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True)
             archivos = c_f.file_uploader(f"Fotos (Máx 6)", type=['jpg','png','jpeg'], accept_multiple_files=True, key=f"f_{i}")
-            obs = c_o.text_area("Observaciones:", key=f"obs_{i}", height=100)
+            obs = c_o.text_area("Observaciones / Relato:", key=f"obs_{i}", height=100)
             
             if archivos or obs:
                 datos_adicionales[i] = {'fotos': [f.name for f in archivos[:6]] if archivos else [], 'obs': obs}
@@ -141,17 +135,16 @@ else:
                 for idx, img in enumerate(archivos[:6]):
                     m_cols[idx].image(img, width=50)
 
-    if st.button("💾 Finalizar y Guardar", use_container_width=True, type="primary"):
+    if st.button("💾 Finalizar y Guardar Auditoría", use_container_width=True, type="primary"):
         if contestadas < len(lista_preguntas) or not auditor_n or (st.session_state.proceso_seleccionado != "GESTION" and not persona_final):
             st.warning("⚠️ Checklist incompleto o falta identificar al auditado.")
         else:
-            with st.spinner("Guardando..."):
-                # Guardamos el nombre de la persona en la columna 3 (índice 3) si corresponde
+            with st.spinner("Guardando en la nube..."):
                 nueva_fila = pd.DataFrame([[
                     str(fecha_a), 
                     auditor_n, 
                     f"AUD-{len(df_historial)+1}", 
-                    persona_final, # Se guarda el nombre escrito o seleccionado
+                    persona_final, 
                     "", "", "", "", "", 
                     str(datos_adicionales), 
                     str(list(resp_actuales.values())), 
@@ -165,3 +158,5 @@ else:
                 st.balloons()
                 st.session_state.auditoria_activa = False
                 st.rerun()
+except Exception as e:
+    st.error(f"Error detectado: {e}")
