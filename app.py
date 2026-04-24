@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Portal de Auditoría Autociel", layout="wide", page_icon="🚗")
 
-# --- URLs DE BASES DE DATOS ---
+# URLs de las hojas (Bases de datos)
 URL_GESTION = "https://docs.google.com/spreadsheets/d/1JYJrSU9aqdG7OqqBwa67DJjTui2DHqsmy7E8dNyMbok/edit#gid=1392263871"
 URL_CCS = "https://docs.google.com/spreadsheets/d/1l_f2DudAEmL3lxLdwQttk0WT5fqmRueK7dootnFL6Ak/edit#gid=652621674"
 URL_CITAS = "https://docs.google.com/spreadsheets/d/1XwagKHRWZLrado40tNN4UjLkSn9vKqJlnD4JF1vaTkk/edit#gid=230929161"
@@ -39,7 +39,7 @@ if 'proceso_seleccionado' not in st.session_state:
 
 # --- CARGA DE DATOS ---
 @st.cache_data(ttl=60)
-def cargar_todo(url, proceso):
+def cargar_todo(url):
     try:
         df = conn.read(spreadsheet=url, ttl=0)
         # Col F(5)=Pregunta, Col G(6)=Descripción, Col L(11)=Score
@@ -51,10 +51,10 @@ def cargar_todo(url, proceso):
         historial = df_hist[df_hist.iloc[:, 11].notnull()].reset_index(drop=True)
         historial.iloc[:, 0] = pd.to_datetime(historial.iloc[:, 0], errors='coerce')
         return df, lista_preg, mapa_desc, historial
-    except:
+    except Exception:
         return None, [], {}, pd.DataFrame()
 
-df_base, lista_preguntas, mapa_descripciones, df_historial = cargar_todo(st.session_state.url_actual, st.session_state.proceso_seleccionado)
+df_base, lista_preguntas, mapa_descripciones, df_historial = cargar_todo(st.session_state.url_actual)
 
 if 'auditoria_activa' not in st.session_state:
     st.session_state.auditoria_activa = False
@@ -109,11 +109,11 @@ else:
         fecha_a = f1.date_input("Fecha", datetime.now())
         auditor_n = f2.text_input("Nombre del Auditor")
         
-        # CAMPO DE TEXTO DIRECTO PARA NOMBRE (Sin sugerencias)
+        # INGRESO MANUAL DIRECTO
         persona_final = ""
         if st.session_state.proceso_seleccionado in ["CCS", "CITAS"]:
             label_auditado = "Persona Auditada" if st.session_state.proceso_seleccionado == "CCS" else "Operador Auditado"
-            persona_final = f3.text_input(f"{label_auditado}:", placeholder="Escriba el nombre completo...")
+            persona_final = f3.text_input(label_auditado, placeholder="Escriba el nombre completo...")
         else:
             f3.empty()
 
@@ -125,8 +125,8 @@ else:
             
             c_r, c_f, c_o = st.columns([1, 1, 1])
             res = c_r.radio("Resultado:", ["Pendiente", "Cumple", "No Cumple", "N/A"], key=f"p_{i}", horizontal=True)
-            archivos = c_f.file_uploader(f"Fotos (Máx 6)", type=['jpg','png','jpeg'], accept_multiple_files=True, key=f"f_{i}")
-            obs = c_o.text_area("Observaciones / Relato:", key=f"obs_{i}", height=100)
+            archivos = c_f.file_uploader(f"Evidencia (Máx 6)", type=['jpg','png','jpeg'], accept_multiple_files=True, key=f"f_{i}")
+            obs = c_o.text_area("Observaciones:", key=f"obs_{i}", height=100)
             
             if archivos or obs:
                 datos_adicionales[i] = {'fotos': [f.name for f in archivos[:6]] if archivos else [], 'obs': obs}
@@ -139,7 +139,7 @@ else:
         if contestadas < len(lista_preguntas) or not auditor_n or (st.session_state.proceso_seleccionado != "GESTION" and not persona_final):
             st.warning("⚠️ Checklist incompleto o falta identificar al auditado.")
         else:
-            with st.spinner("Guardando en la nube..."):
+            with st.spinner("Guardando..."):
                 nueva_fila = pd.DataFrame([[
                     str(fecha_a), 
                     auditor_n, 
@@ -158,5 +158,3 @@ else:
                 st.balloons()
                 st.session_state.auditoria_activa = False
                 st.rerun()
-except Exception as e:
-    st.error(f"Error detectado: {e}")
