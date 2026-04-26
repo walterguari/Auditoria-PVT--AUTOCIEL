@@ -13,17 +13,17 @@ URL_CCS = "https://docs.google.com/spreadsheets/d/1l_f2DudAEmL3lxLdwQttk0WT5fqmR
 URL_CITAS = "https://docs.google.com/spreadsheets/d/1XwagKHRWZLrado40tNN4UjLkSn9vKqJlnD4JF1vaTkk/edit#gid=230929161"
 URL_ENTREGA = "https://docs.google.com/spreadsheets/d/1HcNxmodD4QbzpNYSBkzmRWyb5NlUbhvBinpxVCMCokI/edit#gid=1499782964"
 URL_TALLER = "https://docs.google.com/spreadsheets/d/1kMcjTQrHdWgI7IRMzj8IYj9hIziTemYAObb_9txAMwU/edit#gid=292311251"
+URL_REPUESTOS = "https://docs.google.com/spreadsheets/d/1iOx9dq2kZs-cYBxKt3lK9rOc27Yq6xa4bl4mTISiRcQ/edit#gid=1105513965"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- SELECTOR INICIAL (5 OPCIONES) ---
+# --- SELECTOR INICIAL (6 OPCIONES) ---
 if 'proceso_seleccionado' not in st.session_state:
     st.title("🚀 Bienvenido al Portal de Calidad Autociel")
     st.subheader("Seleccione el proceso de auditoría:")
     
+    # Fila 1
     c1, c2, c3 = st.columns(3)
-    c4, c5, _ = st.columns(3)
-    
     with c1:
         if st.button("📊 GESTIÓN\n(Gerente Post Venta)", use_container_width=True):
             st.session_state.proceso_seleccionado = "GESTION"
@@ -39,6 +39,9 @@ if 'proceso_seleccionado' not in st.session_state:
             st.session_state.proceso_seleccionado = "CITAS"
             st.session_state.url_actual = URL_CITAS
             st.rerun()
+            
+    # Fila 2
+    c4, c5, c6 = st.columns(3)
     with c4:
         if st.button("📦 ENTREGA 0KM\n(Recepción y Prep.)", use_container_width=True):
             st.session_state.proceso_seleccionado = "ENTREGA"
@@ -49,6 +52,11 @@ if 'proceso_seleccionado' not in st.session_state:
             st.session_state.proceso_seleccionado = "TALLER"
             st.session_state.url_actual = URL_TALLER
             st.rerun()
+    with c6:
+        if st.button("⚙️ REPUESTOS\n(Mostrador y Almacén)", use_container_width=True):
+            st.session_state.proceso_seleccionado = "REPUESTOS"
+            st.session_state.url_actual = URL_REPUESTOS
+            st.rerun()
             
     st.stop()
 
@@ -57,7 +65,7 @@ if 'proceso_seleccionado' not in st.session_state:
 def cargar_todo(url):
     try:
         df = conn.read(spreadsheet=url, ttl=0)
-        # Estructura: F(5)=Pregunta, G(6)=Descripción, L(11)=Score
+        # Estructura: Col F(5)=Pregunta, Col G(6)=Descripción, Col L(11)=Score
         df_preg = df.iloc[:, [5, 6]].dropna(subset=[df.columns[5]])
         mapa_desc = dict(zip(df_preg.iloc[:, 0], df_preg.iloc[:, 1]))
         lista_preg = list(mapa_desc.keys())
@@ -125,12 +133,13 @@ else:
         auditor_n = f2.text_input("Nombre del Auditor")
         
         persona_final = ""
-        if st.session_state.proceso_seleccionado in ["CCS", "CITAS", "ENTREGA", "TALLER"]:
+        if st.session_state.proceso_seleccionado in ["CCS", "CITAS", "ENTREGA", "TALLER", "REPUESTOS"]:
             label_map = {
                 "CCS": "Asesor Auditado",
                 "CITAS": "Operador Auditado",
                 "ENTREGA": "Responsable Entrega",
-                "TALLER": "Responsable/Operario Taller"
+                "TALLER": "Responsable Taller",
+                "REPUESTOS": "Responsable de Repuestos"
             }
             persona_final = f3.text_input(label_map[st.session_state.proceso_seleccionado], placeholder="Escriba el nombre completo...")
         else:
@@ -158,7 +167,7 @@ else:
         if contestadas < len(lista_preguntas) or not auditor_n or (st.session_state.proceso_seleccionado != "GESTION" and not persona_final):
             st.warning("⚠️ Checklist incompleto o falta identificar al auditado.")
         else:
-            with st.spinner("Guardando..."):
+            with st.spinner("Guardando en la nube..."):
                 nueva_fila = pd.DataFrame([[
                     str(fecha_a), 
                     auditor_n, 
