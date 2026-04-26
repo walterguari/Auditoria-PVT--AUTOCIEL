@@ -43,7 +43,7 @@ if 'proceso_seleccionado' not in st.session_state:
 
     st.markdown("---")
     st.write("### 🛠️ Mejora Continua")
-    if st.button("📝 REGISTRAR PLAN DE ACCIÓN", use_container_width=True, type="secondary"):
+    if st.button("📝 REGISTRAR Y SEGUIR PLAN DE ACCIÓN", use_container_width=True, type="secondary"):
         st.session_state.proceso_seleccionado = "PLAN_ACCION"
         st.session_state.url_actual = URLS["PLAN_ACCION"]
         st.session_state.modo = "PLAN"
@@ -51,67 +51,81 @@ if 'proceso_seleccionado' not in st.session_state:
     st.stop()
 
 # --- CARGA DE DATOS ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10) # TTL bajo para ver los cambios rápido
 def cargar_datos(url):
     try:
         return conn.read(spreadsheet=url, ttl=0)
     except:
         return pd.DataFrame()
 
-df_base = cargar_datos(st.session_state.url_actual)
-
 # --- MODO PLAN DE ACCIÓN ---
 if st.session_state.get("modo") == "PLAN":
-    st.title("📝 Registro de Plan de Acción")
+    st.title("📝 Gestión de Planes de Acción")
     if st.sidebar.button("🏠 Volver al Inicio"):
         del st.session_state.proceso_seleccionado
         st.rerun()
 
-    with st.form("form_plan", clear_on_submit=True):
-        st.write("### Definición del Desvío")
-        c1, c2 = st.columns(2)
-        sector = c1.selectbox("Sector", ["GESTIÓN", "CCS", "CITAS", "ENTREGA 0KM", "TALLER", "REPUESTOS"])
-        problema = c2.text_input("Problema")
-        causa = st.text_area("Causa Raíz")
-        
-        st.write("### Propuesta y Control")
-        accion = st.text_area("Acción a realizar")
-        c3, c4 = st.columns(2)
-        responsable = c3.text_input("Responsable")
-        obj_indicador = c4.text_input("Objetivo del indicador")
-        indicador_efi = st.text_input("Indicador de eficiencia (¿Cómo lo voy a controlar?)")
-        
-        st.write("### Cronograma y Seguimiento")
-        c5, c6, c7 = st.columns(3)
-        f_inicio_est = c5.date_input("Fecha inicio est.", datetime.now())
-        f_inicio_real = c6.date_input("Inicio Real", datetime.now())
-        f_final = c7.date_input("Fecha final", datetime.now())
-        
-        c8, c9 = st.columns([1, 2])
-        avance = c8.slider("Avance (%)", 0, 100, 0)
-        obs_avance = c9.text_input("Observaciones de avance")
-        
-        if st.form_submit_button("💾 Guardar Plan de Acción", use_container_width=True):
-            if not problema or not responsable:
-                st.warning("⚠️ Los campos 'Problema' y 'Responsable' son obligatorios.")
-            else:
+    # Formulario de Registro
+    with st.expander("➕ Registrar Nuevo Desvío / Acción", expanded=True):
+        with st.form("form_plan", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            sector = c1.selectbox("Sector", ["GESTIÓN", "CCS", "CITAS", "ENTREGA 0KM", "TALLER", "REPUESTOS", "OTROS"])
+            problema = c2.text_input("Problema / Desvío Detectado")
+            causa = st.text_area("Causa Raíz")
+            accion = st.text_area("Acción a realizar")
+            
+            c3, c4, c5 = st.columns(3)
+            responsable = c3.text_input("Responsable")
+            obj_indicador = c4.text_input("Objetivo del indicador")
+            indicador_efi = c5.text_input("Modo de Control")
+            
+            c6, c7, c8 = st.columns(3)
+            f_inicio_est = c6.date_input("Fecha inicio est.", datetime.now())
+            f_inicio_real = c7.date_input("Inicio Real", datetime.now())
+            f_final = c8.date_input("Fecha final", datetime.now())
+            
+            c9, c10 = st.columns([1, 2])
+            avance = c9.select_slider("Avance", options=["0%", "25%", "50%", "75%", "100%"])
+            obs_avance = c10.text_input("Observaciones de seguimiento")
+            
+            if st.form_submit_button("💾 Guardar en Plan de Acción", use_container_width=True):
+                df_plan = cargar_datos(st.session_state.url_actual)
                 nueva_fila = pd.DataFrame([[
                     sector, problema, causa, accion, responsable, obj_indicador, 
                     indicador_efi, str(f_inicio_est), str(f_inicio_real), 
-                    str(f_final), f"{avance}%", obs_avance
-                ]], columns=df_base.columns[:12])
+                    str(f_final), avance, obs_avance
+                ]], columns=df_plan.columns[:12])
                 
-                df_final = pd.concat([df_base, nueva_fila], ignore_index=True)
-                conn.update(spreadsheet=st.session_state.url_actual, data=df_final)
-                st.success("✅ ¡Plan de Acción registrado exitosamente!")
-                st.balloons()
+                df_actualizado = pd.concat([df_plan, nueva_fila], ignore_index=True)
+                conn.update(spreadsheet=st.session_state.url_actual, data=df_actualizado)
+                st.success("✅ ¡Desvío registrado!")
+                st.cache_data.clear()
+                st.rerun()
+
+    st.markdown("---")
+    
+    # Visualización de Desvíos Registrados
+    st.write("### 📋 Historial de Desvíos por Sector")
+    df_visualizacion = cargar_datos(st.session_state.url_actual)
+    
+    if not df_visualizacion.empty:
+        # Filtro rápido
+        sectores_disponibles = ["TODOS"] + sorted(df_visualizacion["Sector"].unique().tolist())
+        sector_f = st.selectbox("Filtrar tabla por Sector:", sectores_disponibles)
+        
+        df_filtrado = df_visualizacion
+        if sector_f != "TODOS":
+            df_filtrado = df_visualizacion[df_visualizacion["Sector"] == sector_f]
+        
+        st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+    else:
+        st.info("Aún no hay desvíos registrados.")
 
 # --- MODO AUDITORÍA (RESUMIDO) ---
 else:
-    # (Aquí va tu lógica de auditoría de 2 pantallas: Dashboard y Formulario)
-    # Se mantiene igual que antes para asegurar la funcionalidad de carga de encuestas
+    # Se mantiene la lógica de auditoría existente...
     st.title(f"📊 Dashboard: {st.session_state.proceso_seleccionado}")
     if st.sidebar.button("🏠 Volver al Inicio"):
         del st.session_state.proceso_seleccionado
         st.rerun()
-    st.info("Para realizar una nueva auditoría, presiona el botón correspondiente en el Dashboard.")
+    st.info("Carga el contenido de auditoría aquí.")
